@@ -8,7 +8,7 @@ import yaml
 from jlohn_mladden.quip import Quip
 from jlohn_mladden.sounds import SoundManager
 from jlohn_mladden.game import GamesWatcher
-from jlohn_mladden.announcer import DiscordAnnouncer, TTSAnnouncer
+from jlohn_mladden.announcer import DiscordAnnouncer, TTSAnnouncer, SingingAnnouncer
 
 
 @click.command()
@@ -19,9 +19,8 @@ from jlohn_mladden.announcer import DiscordAnnouncer, TTSAnnouncer
 def main(calling_for, test, test_ascii, config):
     with open(config, 'r') as f:
         y = yaml.load(f)
-        sound_manager = SoundManager(y)
-
         quips = Quip.load(y['quips'])
+        sound_manager = SoundManager(y)
 
         announcer_config = y['announcer']
         if calling_for:
@@ -33,6 +32,8 @@ def main(calling_for, test, test_ascii, config):
             loop.create_task(announcer.start())
         elif announcer_config['announcer_type'] == 'tts':
             announcer = TTSAnnouncer(announcer_config, sound_manager)
+        elif announcer_config['announcer_type'] == 'vocaloid':
+            announcer = SingingAnnouncer(announcer_config,sound_manager)
         else:
             raise Exception('Unsupported announcer type')
 

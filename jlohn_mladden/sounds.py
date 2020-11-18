@@ -7,7 +7,6 @@ import sys
 import pyaudio
 import pydub
 
-
 class SoundManager(object):
 
     def __init__(self, config):
@@ -25,18 +24,18 @@ class SoundManager(object):
 
         self.sound_cues = config['sound_cues']
 
-    def execute_sound(self, key, delay=0):
-        if key not in self.sound_effects:
-            return
+    def execute_sound(self, seg, delay=0):
+
         if delay:
             time.sleep(delay)
-        seg = self.sound_effects[key]
+        print("hi")
         stream = self._pyaudio.open(
             format=self._pyaudio.get_format_from_width(seg.sample_width),
             channels=seg.channels,
             rate=seg.frame_rate,
             output=True,
         )
+
         try:
             for chunk in pydub.utils.make_chunks(seg, 500):
                 stream.write(chunk._data)
@@ -44,9 +43,9 @@ class SoundManager(object):
             stream.stop_stream()
             stream.close()
 
-    def play_sound(self, key, delay=0):
-        print(key, file=sys.stderr)
-        self.sound_pool.submit(self.execute_sound, key, delay=delay)
+    def play_sound(self, sound, delay=0):
+    #    print(key, file=sys.stderr)
+        self.sound_pool.submit(self.execute_sound, sound, delay=delay)
 
     def cue_sound(self, message):
         if not message:

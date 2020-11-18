@@ -23,3 +23,7 @@ six==1.15.0
 ujson==2.0.3
 urllib3==1.25.10
 yarl==1.5.1
+musthe==1.0.0
+music21==6.1.0
+beautifulsoup4==4.9.3
+

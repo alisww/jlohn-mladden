@@ -13,6 +13,7 @@ import pyttsx3
 
 from jlohn_mladden.splorts_center import SplortsCenter
 from jlohn_mladden.quip import Quip
+from jlohn_mladden.vocaloid import Vocaloid
 
 
 class _dummy:
@@ -68,7 +69,7 @@ class Announcer(abc.ABC):
 
     def choose_game(self, schedule, index):
         """
-        Upon receiving the stream data update and full schedule, select 
+        Upon receiving the stream data update and full schedule, select
         """
         return schedule.get(index[self.calling_for])
 
@@ -104,6 +105,183 @@ class Announcer(abc.ABC):
         Override with custom processing of a quip before it is sent to output, ie for localization
         """
         return quip
+
+class SingingAnnouncer(Announcer):
+
+    def __init__(self, config, sound_manager=None):
+        super().__init__(config, sound_manager)
+        self.vocaloid = Vocaloid(sound_manager)
+        self.current_game_id = ''
+
+    def enqueue_message(self, message):
+        self.vocaloid.say(message)
+
+    def speak(self):
+        self.vocaloid.sing()
+
+    def change_channel(self, schedule):
+        if not self.current_game_id:
+            # first iteration, hasn't been hydrated yet
+            return ''
+
+        if self.current_game_id in schedule and not schedule[self.current_game_id].game_complete:
+            return self.current_game_id
+
+        candidates = []
+        for game in schedule.values():
+            if not game.game_complete:
+                candidates.append(game)
+        if not candidates:
+            self.current_game_id = ''
+            self.calling_for = self.main_game
+            return ''
+
+        self.splorts_center = None
+
+        candidates = sorted(candidates, key=lambda g: abs(g.home_score - g.away_score))
+        next_game = candidates[0]
+        update = f'Thank you for listening to this {self.calling_for} broadcast. Over to the {next_game.home_team_nickname}.'
+        update = self.preprocess_quip(update)
+        print(update)
+
+        self.current_game_id = next_game.id_
+        self.calling_for = next_game.home_team_nickname.lower()
+
+        self.last_pbps = []
+        return next_game.id_
+
+    def on_play_by_play(self, message, game, schedule):
+        if self.current_game_id != game.id_:
+            # new game, switch voice
+            self.current_game_id = game.id_
+
+        if 'Game over' in message and 'game over.' in self.last_pbps:
+            game_id = self.change_channel(schedule)
+            return True
+        return False
+
+    def on_update(self):
+        def callback(schedule, index):
+            if not schedule:
+                return []
+
+            schedule = self.on_schedule(schedule)
+
+            game = self.choose_game(schedule, index)
+            pbp = game and game.last_update
+            if not pbp:
+                return []
+            skip_quips = self.on_play_by_play(pbp, game, schedule)
+            if skip_quips:
+                return []
+            if pbp.lower() in self.last_pbps:
+                return []
+            quips = Quip.say_quips(pbp, game)
+            for quip in quips:
+                quip = self.preprocess_quip(quip)
+                if quip.lower() in self.last_pbps:
+                    continue
+                self.last_pbps.append(quip.lower())
+                print(quip)
+                self.enqueue_message(quip)
+
+            self.last_pbps = self.last_pbps[-4:]  # redundancy
+            self.speak()
+
+        return callback
+
+    def preprocess_quip(self, quip):
+        """
+        Override with custom processing of a quip before it is sent to output, ie for localization
+        """
+        return quip
+
+
+    def choose_game(self, schedule, index):
+        """
+        Overridden for playoff mode.
+        """
+        cur_game = schedule.get(index.get(self.calling_for, ''))
+        if not self.playoff_mode:
+            return cur_game
+
+        point_diff = 0
+        if cur_game:
+            # we are already calling a game, only check if we need to switch
+            # stickiness algo by sakimori
+            # switch if blowout (4+ run differential)
+            # choose game that's tied in 9th and not 0 0
+            # always watch extra innings
+            games = sorted(schedule.values(), key=lambda g: g.inning)
+            for game in games:
+                if game.game_complete:
+                    continue
+                if game.inning > 9:
+                    # extra innings, h*ck ya
+                    if game.home_team_nickname.lower() != self.calling_for:
+                        print(f"We have extra innings with {game.away_team_nickname} at {game.home_team_nickname}. Switching broadcast.")
+                    self.calling_for = game.home_team_nickname.lower()
+                    self.current_game_id = game.id_
+                    return game
+                if game.inning == 9 and game.point_differential == 0 and game.home_score > 0:
+                    # tied in the ninth
+                    if game.home_team_nickname.lower() != self.calling_for:
+                        print(f"We've a tie game in the ninth, over to {game.away_team_nickname} at {game.home_team_nickname}.")
+                    self.calling_for = game.home_team_nickname.lower()
+                    self.current_game_id = game.id_
+                    return game
+
+            if game.point_differential <= 4:
+                return cur_game
+            # there's a blow out, fall through to general game selection
+
+        # playoff algo by sakimori
+        games = [g for g in schedule.values() if not g.game_complete]
+        games = sorted(games, key=lambda g: min(3 - g.home_series_wins, 3 - g.away_series_wins))
+        if not games:
+            if cur_game:
+                return cur_game
+            return list(schedule.values())[0]
+
+        # if any games are not in the 9th inning, remove the ones that are
+        # repeat for 8th
+        games = sorted(games, key=lambda g: g.inning)
+        if games[0].inning < 7:
+            games = [g for g in games if g.inning < 7]
+
+        # take game with closests score
+        # break ties by losing team having highest number of regular season wins
+        def compare(a, b):
+            if a.point_differential < b.point_differential:
+                return -1
+            if a.point_differential > b.point_differential:
+                return 1
+            a_series = a.away_wins if a.home_series_wins < a.away_series_wins else a.home_wins
+            b_series = b.away_wins if b.home_series_wins < b.away_series_wins else b.home_wins
+            if a_series < b_series:
+                return -1
+            if a_series > b_series:
+                return 1
+            '''
+            a_wins = a.home_wins if a.home_score < a.away_score else b.away_wins
+            b_wins = b.home_wins if b.home_score < b.away_score else b.away_wins
+            if a_wins < b_wins:
+                return -1
+            if a_wins > b_wins:
+                return 1
+            '''
+            return 0
+
+        games = sorted(games, key=cmp_to_key(compare))
+        new_game = games[0]
+        if self.current_game_id == new_game.id_:
+            return new_game
+
+        self.calling_for = new_game.home_team_nickname.lower()
+        self.current_game_id = new_game.id_
+        # if there was a blowout, mention the switch
+        return new_game
+
 
 
 class TTSAnnouncer(Announcer):
@@ -209,7 +387,7 @@ class TTSAnnouncer(Announcer):
             self.splorts_center = SplortsCenter(game.season, game.day)
             self.choose_voice()
         update = self.preprocess_quip(self.splorts_center.next_update())
-        print(update)
+        print("Update:" + update)
         self._sound_manager.play_sound('splorts_update')
         self.voice.say(update)
         self.voice.runAndWait()

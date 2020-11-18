@@ -1,10 +1,10 @@
 ---
 announcer:
   calling_for: Fridays
-  announcer_type: tts
+  announcer_type: vocaloid
   discord_prefix: ''
   discord_onjoin: '$start'
-  enable_splorts_center: true
+  enable_splorts_center: false
   friends:
     - 'com.apple.speech.synthesis.voice.daniel.premium'
     - 'com.apple.speech.synthesis.voice.Alex'
