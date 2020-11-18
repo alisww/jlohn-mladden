@@ -24,11 +24,19 @@ class SoundManager(object):
 
         self.sound_cues = config['sound_cues']
 
-    def execute_sound(self, seg, delay=0):
+    def execute_sound(self, sound, delay=0):
+        seg = None
+        if isinstance(sound,pydub.AudioSegment):
+            seg = sound
+        elif isinstance(sound, io.IOBase):
+            seg = pydub.AudioSegment.from_wav(sound)
+        elif isinstance(sound,str) and sound in self.sound_effects:
+            seg = self.sound_effects[sound]
+        else:
+            return
 
         if delay:
             time.sleep(delay)
-        print("hi")
         stream = self._pyaudio.open(
             format=self._pyaudio.get_format_from_width(seg.sample_width),
             channels=seg.channels,
